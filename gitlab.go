@@ -25,6 +25,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"sort"
 	"strconv"
@@ -32,6 +33,7 @@ import (
 	"time"
 
 	"github.com/google/go-querystring/query"
+	"golang.org/x/net/publicsuffix"
 )
 
 const (
@@ -40,17 +42,18 @@ const (
 	userAgent      = "go-gitlab/" + libraryVersion
 )
 
-// tokenType represents a token type within GitLab.
+// authType represents an authentication type within GitLab.
 //
 // GitLab API docs: https://docs.gitlab.com/ce/api/
-type tokenType int
+type authType int
 
-// List of available token type
+// List of available authentication types.
 //
 // GitLab API docs: https://docs.gitlab.com/ce/api/
 const (
-	privateToken tokenType = iota
+	basicAuth authType = iota
 	oAuthToken
+	privateToken
 )
 
 // AccessLevelValue represents a permission level within GitLab.
@@ -188,7 +191,7 @@ type Client struct {
 	baseURL *url.URL
 
 	// token type used to make authenticated API calls.
-	tokenType tokenType
+	authType authType
 
 	// token used to make authenticated API calls.
 	token string
@@ -244,24 +247,77 @@ type ListOptions struct {
 
 // NewClient returns a new GitLab API client. If a nil httpClient is
 // provided, http.DefaultClient will be used. To use API methods which require
-// authentication, provide a valid private token.
+// authentication, provide a valid private or personal token.
 func NewClient(httpClient *http.Client, token string) *Client {
-	return newClient(httpClient, privateToken, token)
+	client := newClient(httpClient)
+	client.authType = privateToken
+	client.token = token
+	return client
+}
+
+// NewBasicAuthClient returns a new GitLab API client. If a nil httpClient is
+// provided, http.DefaultClient will be used. To use API methods which require
+// authentication, provide a valid username and password.
+//
+// NOTE: This is not an official/supported way to use the API. So if possible
+// please use `NewClient` or `NewOAuthClient` instead.
+func NewBasicAuthClient(httpClient *http.Client, endpoint, username, password string) (*Client, error) {
+	client := newClient(httpClient)
+
+	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	if err != nil {
+		return nil, err
+	}
+	client.client.Jar = jar
+
+	req, err := http.NewRequest("GET", endpoint+"/users/sign_in", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	v := url.Values{
+		"user[login]":    {username},
+		"user[password]": {password},
+	}
+
+	req, err = http.NewRequest("POST", endpoint+"/users/sign_in", strings.NewReader(v.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-CSRF-Token", resp.Header.Get("X-CSRF-Token"))
+
+	resp, err = client.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected response: %s", resp.Status)
+	}
+
+	return client, nil
 }
 
 // NewOAuthClient returns a new GitLab API client. If a nil httpClient is
 // provided, http.DefaultClient will be used. To use API methods which require
 // authentication, provide a valid oauth token.
 func NewOAuthClient(httpClient *http.Client, token string) *Client {
-	return newClient(httpClient, oAuthToken, token)
+	client := newClient(httpClient)
+	client.authType = oAuthToken
+	client.token = token
+	return client
 }
 
-func newClient(httpClient *http.Client, tokenType tokenType, token string) *Client {
+func newClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
-	c := &Client{client: httpClient, tokenType: tokenType, token: token, UserAgent: userAgent}
+	c := &Client{client: httpClient, UserAgent: userAgent}
 	if err := c.SetBaseURL(defaultBaseURL); err != nil {
 		// Should never happen since defaultBaseURL is our constant.
 		panic(err)
@@ -380,7 +436,7 @@ func (c *Client) NewRequest(method, path string, opt interface{}, options []Opti
 
 	req.Header.Set("Accept", "application/json")
 
-	switch c.tokenType {
+	switch c.authType {
 	case privateToken:
 		req.Header.Set("PRIVATE-TOKEN", c.token)
 	case oAuthToken:
