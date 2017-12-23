@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -263,6 +264,7 @@ func NewClient(httpClient *http.Client, token string) *Client {
 // please use `NewClient` or `NewOAuthClient` instead.
 func NewBasicAuthClient(httpClient *http.Client, endpoint, username, password string) (*Client, error) {
 	client := newClient(httpClient)
+	client.SetBaseURL(endpoint + "/api/v4")
 
 	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	if err != nil {
@@ -279,6 +281,18 @@ func NewBasicAuthClient(httpClient *http.Client, endpoint, username, password st
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	match := regexp.MustCompile(`"csrf-token" content="(.*?)"`).FindSubmatch(body)
+	if len(match) != 2 {
+		return nil, fmt.Errorf("unable to retieve CSRF token")
+	}
+	token := string(match[1])
 
 	v := url.Values{
 		"user[login]":    {username},
@@ -289,7 +303,7 @@ func NewBasicAuthClient(httpClient *http.Client, endpoint, username, password st
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-CSRF-Token", resp.Header.Get("X-CSRF-Token"))
+	req.Header.Set("X-CSRF-Token", token)
 
 	resp, err = client.client.Do(req)
 	if err != nil {
