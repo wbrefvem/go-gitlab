@@ -502,6 +502,7 @@ func (c *Client) NewRequest(method, path string, opt interface{}, options []Opti
 	u := *c.baseURL
 	// Set the encoded opaque data
 	u.Opaque = c.baseURL.Path + path
+	u.Path = u.Opaque
 
 	if opt != nil {
 		q, err := query.Values(opt)
