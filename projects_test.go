@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -294,7 +295,14 @@ func TestListProjectForks(t *testing.T) {
 	defer teardown(server)
 
 	mux.HandleFunc("/api/v4/projects/", func(w http.ResponseWriter, r *http.Request) {
-		testURL(t, r, "/api/v4/projects/namespace%2Fname/forks?archived=true&order_by=name&page=2&per_page=3&search=query&simple=true&sort=asc&visibility=public")
+		want := "/api/v4/projects/namespace%2Fname/forks"
+		requestURI, err := url.PathUnescape(r.RequestURI)
+		if err != nil {
+			t.Errorf(err.Error())
+		}
+		if !strings.HasPrefix(requestURI, want) {
+			t.Errorf("Request url: %+v, should have prefix %s", r.RequestURI, want)
+		}
 		testMethod(t, r, "GET")
 		fmt.Fprint(w, `[{"id":1},{"id":2}]`)
 	})

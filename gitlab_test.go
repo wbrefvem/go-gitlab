@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,7 @@ func teardown(server *httptest.Server) {
 }
 
 func testURL(t *testing.T, r *http.Request, want string) {
-	if got := r.RequestURI; got != want {
+	if got, _ := url.PathUnescape(r.RequestURI); got != want {
 		t.Errorf("Request url: %+v, want %s", got, want)
 	}
 }
@@ -68,7 +69,12 @@ func TestSetBaseURL(t *testing.T) {
 }
 
 func TestCheckResponse(t *testing.T) {
-	req, err := NewClient(nil, "").NewRequest("GET", "test", nil, nil)
+	client := NewClient(nil, "")
+
+	req, err := client.NewRequest("GET", "test", nil, nil)
+
+	t.Logf("---------------> actual URL: %s", req.URL.Path)
+
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
